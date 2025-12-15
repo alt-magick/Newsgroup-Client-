@@ -1,0 +1,2 @@
+# Newsgroup-Client-
+For Termux 
