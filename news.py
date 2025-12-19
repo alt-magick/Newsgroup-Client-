@@ -7,7 +7,6 @@ import re
 import quopri
 import base64
 from email.message import EmailMessage
-import getpass
 import os
 import tempfile
 import subprocess
@@ -15,8 +14,8 @@ import subprocess
 # ================= USER CONFIG =================
 NNTP_SERVER = "usnews.blocknews.net"
 NNTP_PORT   = 563
-USERNAME    = "name"
-PASSWORD    = "password"
+USERNAME    = ""
+PASSWORD    = ""
 PAGE_LINES             = 12
 MAX_ARTICLES_LIST      = 200
 MAX_REPLY_SCAN         = 300
@@ -27,6 +26,19 @@ SHOW_REPLY_COUNT_MAIN  = True
 
 RE_REPLY = re.compile(r"^(re|fwd):", re.IGNORECASE)
 CLEAN_RE = re.compile(r"[\x00-\x08\x0b-\x0c\x0e-\x1f]")
+
+# ---------- STATUS LINE ----------
+STATUS_LINE = ""
+
+def set_status(msg):
+    global STATUS_LINE
+    STATUS_LINE = msg
+
+def show_status():
+    global STATUS_LINE
+    if STATUS_LINE:
+        print(f"\n[{STATUS_LINE}]")
+        STATUS_LINE = ""
 
 # ---------- RAW KEY INPUT ----------
 def get_key():
@@ -43,13 +55,8 @@ def prompt(text):
     sys.stdout.flush()
     return sys.stdin.readline().strip()
 
-def press_any_key(msg="Press any key to continue..."):
-    print(msg)
-    get_key()
-
 # ---------- HARD-CODED PAGER ----------
 def paged_print(lines):
-    global PAGE_LINES
     i = 0
     total = len(lines)
     while i < total:
@@ -60,11 +67,8 @@ def paged_print(lines):
         if i >= total:
             break
         print("\n--- ENTER = next page | SPACE = skip ---")
-        k = get_key()
-        if k == " ":
+        if get_key() == " ":
             break
-        elif k in ("\r", "\n"):
-            continue
 
 # ---------- BODY DECODER ----------
 def decode_body_line(line_bytes):
@@ -75,8 +79,7 @@ def decode_body_line(line_bytes):
             s = quopri.decodestring(s).decode("utf-8", errors="replace")
         except Exception:
             pass
-    b64chars = re.fullmatch(r'[A-Za-z0-9+/=\s]+', s)
-    if b64chars and len(s.strip()) > 20:
+    if re.fullmatch(r"[A-Za-z0-9+/=\s]+", s) and len(s.strip()) > 20:
         try:
             s = base64.b64decode(s, validate=True).decode("utf-8", errors="replace")
         except Exception:
@@ -85,17 +88,58 @@ def decode_body_line(line_bytes):
 
 # ---------- POST BODY EDITOR ----------
 def edit_body(initial=""):
-    EDITOR = os.environ.get("EDITOR","nano")
+    editor = os.environ.get("EDITOR", "nano")
     fd, path = tempfile.mkstemp(suffix=".txt")
     try:
-        with os.fdopen(fd, 'w') as f:
+        with os.fdopen(fd, "w") as f:
             f.write(initial)
-        subprocess.call([EDITOR, path])
-        with open(path, 'r') as f:
-            content = f.read()
-        return content
+        subprocess.call([editor, path])
+        with open(path, "r") as f:
+            return f.read()
     finally:
         os.unlink(path)
+
+# ---------- POST BODY SOURCE ----------
+def get_post_body():
+    print("\nPost body source:")
+    print("  E = Edit in editor")
+    print("  F = Load from external text file")
+    print("  T = Type directly in terminal")
+    choice = get_key().lower()
+
+    if choice == "f":
+        path = prompt("\nEnter path to text file: ")
+        try:
+            with open(path, "r", encoding="utf-8", errors="replace") as f:
+                body = f.read()
+            if not body.strip():
+                set_status("Post aborted (file is empty)")
+                return None
+            return body
+        except Exception as e:
+            set_status(f"Failed to read file: {e}")
+            return None
+
+    elif choice == "t":
+        print("\nType your post below. End with a period on a line by itself.")
+        lines = []
+        while True:
+            line = input()
+            if line.strip() == ".":
+                break  # stop input when user enters a single period on a line
+            lines.append(line)
+        body = "\n".join(lines)
+        if not body.strip():
+            set_status("Post aborted (empty input)")
+            return None
+        return body
+
+    # default: editor
+    body = edit_body()
+    if not body.strip():
+        set_status("Post aborted (empty body)")
+        return None
+    return body
 
 # ---------- POSTING ----------
 def post_article(nntp, group, subject=None, references=None):
@@ -103,10 +147,11 @@ def post_article(nntp, group, subject=None, references=None):
     email = prompt("Enter your email: ")
     if not subject:
         subject = prompt("Enter subject: ")
-    body = edit_body()
-    if not body.strip():
-        print("Empty body. Aborting post.")
-        return
+
+    body = get_post_body()
+    if not body:
+        return False
+
     msg = EmailMessage()
     msg["From"] = f"{name} <{email}>"
     msg["Newsgroups"] = group
@@ -114,12 +159,14 @@ def post_article(nntp, group, subject=None, references=None):
     if references:
         msg["References"] = references
     msg.set_content(body)
+
     try:
-        resp = nntp.post(msg.as_bytes())
-        print("Posted successfully!")
+        nntp.post(msg.as_bytes())
+        set_status("Article posted successfully")
+        return True
     except Exception as e:
-        print(f"Failed to post article: {e}")
-    press_any_key()
+        set_status(f"Post failed: {e}")
+        return False
 
 # ---------- REPLY POSTING ----------
 def post_reply(nntp, group, article_num):
@@ -129,16 +176,23 @@ def post_reply(nntp, group, article_num):
         for raw in hinfo.lines:
             line = decode_body_line(raw)
             if ":" in line:
-                k, v = line.split(":",1)
-                headers[k.lower()]=v.strip()
+                k, v = line.split(":", 1)
+                headers[k.lower()] = v.strip()
+
         subject = headers.get("subject", "(no subject)")
         if not RE_REPLY.match(subject):
             subject = "Re: " + subject
-        references = headers.get("references", "") + " " + headers.get("message-id", "")
-        post_article(nntp, group, subject=subject, references=references.strip())
+
+        refs = []
+        if "references" in headers:
+            refs.append(headers["references"])
+        if "message-id" in headers:
+            refs.append(headers["message-id"])
+
+        return post_article(nntp, group, subject, " ".join(refs))
     except Exception as e:
-        print(f"Cannot reply to article {article_num}: {e}")
-        press_any_key()
+        set_status(f"Reply failed: {e}")
+        return False
 
 # ---------- ARTICLE DISPLAY ----------
 def show_article(nntp, num, group=None, allow_reply=False):
@@ -150,204 +204,155 @@ def show_article(nntp, num, group=None, allow_reply=False):
             if ":" in line:
                 k, v = line.split(":", 1)
                 headers[k.lower()] = v.strip()
+
         _, body = nntp.body(str(num))
         lines = [decode_body_line(l) for l in body.lines]
-        header_lines = [
+
+        paged_print([
             f"From: {headers.get('from','?')}",
             f"Date: {headers.get('date','?')}",
             f"Subject: {headers.get('subject','(no subject)')}",
-        ]
-        all_lines = header_lines + [""] + lines
-        paged_print(all_lines)
+            ""
+        ] + lines)
+
         if allow_reply and group:
-            print("\nP=reply  (any key to continue)")
-            k = get_key().lower()
-            if k == "p":
+            print("\nP=reply  (any other key to continue)")
+            if get_key().lower() == "p":
                 post_reply(nntp, group, num)
-        else:
-            press_any_key()
+
     except Exception as e:
-        print(f"Failed to fetch article: {e}")
-        press_any_key()
+        set_status(f"Fetch failed: {e}")
 
 # ---------- REPLY SCANNING ----------
 def scan_replies_xover(nntp, msgid, first, last):
-    global MAX_REPLY_SCAN
     replies = []
     start = max(first, last - MAX_REPLY_SCAN)
-    print("\nScanning for replies...")
     try:
         _, overviews = nntp.over((start, last))
     except:
-        return []
-    total = len(overviews)
-    for i, (num, hdr) in enumerate(overviews, 1):
+        return replies
+
+    for num, hdr in overviews:
         if msgid in hdr.get("references", ""):
             replies.append(int(num))
-        print(f"\rScanned {i}/{total}", end="", flush=True)
-    print()
     return replies
 
-# ---------- GROUP BROWSER ----------
-last_seen_article = {}
-
-def browse_group(nntp, group):
-    global PAGE_LINES, MAX_ARTICLES_LIST, MAX_REPLY_SCAN, START_GROUP, SHOW_REPLY_COUNT, SHOW_REPLY_COUNT_MAIN, last_seen_article
+# ---------- GROUP RELOAD ----------
+def reload_group(nntp, group):
     try:
         _, _, first, last, _ = nntp.group(group)
-    except Exception as e:
-        print(f"Failed to open group: {e}")
-        return
-    first = int(first)
-    last  = int(last)
-    # fetch recent articles
-    try:
+        first = int(first)
+        last = int(last)
+
         _, overviews = nntp.over((max(first, last - MAX_ARTICLES_LIST), last))
+
+        posts = []
+        for num, hdr in reversed(overviews):
+            subject = hdr.get("subject", "")
+            if RE_REPLY.match(subject):
+                continue
+
+            msgid = hdr.get("message-id", "")
+            replies = sum(
+                1 for _, h in overviews if msgid in h.get("references", "")
+            ) if SHOW_REPLY_COUNT_MAIN else 0
+
+            posts.append({
+                "num": int(num),
+                "subject": CLEAN_RE.sub("", subject),
+                "from": CLEAN_RE.sub("", hdr.get("from", "?")),
+                "date": hdr.get("date", "?"),
+                "msgid": msgid,
+                "replies": replies
+            })
+
+        return posts, first, last
+
     except Exception as e:
-        print(f"Error loading articles: {e}")
+        set_status(f"Reload failed: {e}")
+        return None, None, None
+
+# ---------- GROUP BROWSER ----------
+def browse_group(nntp, group):
+    posts, first, last = reload_group(nntp, group)
+    if not posts:
         return
-    posts = []
-    for num, hdr in reversed(overviews):
-        subject = hdr.get("subject", "")
-        msgid = hdr.get("message-id", "")
-        if RE_REPLY.match(subject):
-            continue
-        reply_count = 0
-        if msgid and SHOW_REPLY_COUNT_MAIN:
-            for _, h in overviews:
-                if msgid in h.get("references", ""):
-                    reply_count += 1
-        posts.append({
-            "num": int(num),
-            "subject": CLEAN_RE.sub("", subject),
-            "from": CLEAN_RE.sub("", hdr.get("from", "?")),
-            "date": hdr.get("date", "?"),
-            "msgid": msgid,
-            "replies": reply_count
-        })
-    last_seen_article[group] = posts[0]["num"] if posts else last
+
     index = 0
+
     while index < len(posts):
         p = posts[index]
+
         print(f"\n[{index+1}] #{p['num']}")
         print(f"From: {p['from']}")
         print(f"Date: {p['date']}")
         print(f"Replies: {p['replies'] if SHOW_REPLY_COUNT_MAIN else '?'}")
         print(f"Subject: {p['subject']}")
-        print("\nENTER=read  SPACE=next  R=replies  N=new post  J=jump  G=group  L=reload  C=config  Q=quit")
+
+        show_status()
+        print("\nENTER=read  SPACE=next  R=replies  N=new post  L=reload  J=jump  G=group  Q=quit")
+
         key = get_key().lower()
+
         if key == "q":
             sys.exit(0)
+
         elif key == " ":
             index += 1
-        elif key in ("\r","\n"):
-            show_article(nntp,p["num"], group=group, allow_reply=True)
-        elif key == "r":
-            replies = scan_replies_xover(nntp, p["msgid"], first, last)
-            if not replies:
-                print("No replies found.")
-                press_any_key()
-                continue
-            print(f"\n{len(replies)} replies found.")
-            for i, rnum in enumerate(replies):
-                if i < len(replies) - 1:
-                    print("\nENTER = next reply | SPACE = skip remaining replies | P=reply")
-                else:
-                    print("\nEnd of replies | P=reply")
-                k = get_key().lower()
-                if k == " " and i < len(replies) - 1:
-                    break
-                elif k in ("\r","\n"):
-                    show_article(nntp,rnum, group=group, allow_reply=True)
-                elif k == "p":
-                    post_reply(nntp, group, rnum)
+
+        elif key in ("\r", "\n"):
+            show_article(nntp, p["num"], group, True)
+
         elif key == "n":
-            post_article(nntp, group)
+            if post_article(nntp, group):
+                posts, first, last = reload_group(nntp, group)
+                index = 0
+
+        elif key == "l":
+            posts, first, last = reload_group(nntp, group)
+            index = 0
+            set_status("Group reloaded")
+
         elif key == "j":
             val = prompt("Jump to post number: ")
             if val.isdigit():
-                idx = int(val)-1
+                idx = int(val) - 1
                 if 0 <= idx < len(posts):
                     index = idx
+
         elif key == "g":
-            newg = prompt("New group: ")
-            browse_group(nntp,newg)
+            browse_group(nntp, prompt("New group: "))
             return
-        elif key == "l":
-            last_num = last_seen_article.get(group,last)
-            try:
-                _, overviews = nntp.over((last_num+1,last))
-            except:
-                print("No new articles.")
-                press_any_key()
+
+        elif key == "r":
+            replies = scan_replies_xover(nntp, p["msgid"], first, last)
+            if not replies:
+                set_status("No replies found")
                 continue
-            new_posts=[]
-            for num,hdr in reversed(overviews):
-                subject = hdr.get("subject","")
-                msgid = hdr.get("message-id","")
-                if RE_REPLY.match(subject):
-                    continue
-                reply_count = 0
-                if msgid and SHOW_REPLY_COUNT_MAIN:
-                    for _, h in overviews:
-                        if msgid in h.get("references",""):
-                            reply_count+=1
-                new_posts.append({
-                    "num": int(num),
-                    "subject": CLEAN_RE.sub("",subject),
-                    "from": CLEAN_RE.sub("",hdr.get("from","?")),
-                    "date": hdr.get("date","?"),
-                    "msgid": msgid,
-                    "replies": reply_count
-                })
-            if new_posts:
-                print(f"{len(new_posts)} new articles found!")
-                posts = new_posts + posts
-                last_seen_article[group] = new_posts[0]["num"]
-            else:
-                print("No new articles.")
-                press_any_key()
-        elif key == "c":
-            while True:
-                print("\n=== CONFIG MENU ===")
-                print(f"1. Set page lines (current {PAGE_LINES})")
-                print(f"2. Set max articles to list (current {MAX_ARTICLES_LIST})")
-                print(f"3. Set max replies to scan (current {MAX_REPLY_SCAN})")
-                print(f"4. Set default group (current {START_GROUP})")
-                print(f"5. Toggle showing reply counts when reading replies (current {'ON' if SHOW_REPLY_COUNT else 'OFF'})")
-                print(f"6. Toggle showing reply counts on main menu (current {'ON' if SHOW_REPLY_COUNT_MAIN else 'OFF'})")
-                print("0. Return to main menu")
-                choice = prompt("Select option: ")
-                if choice=="0":
+
+            for i, rnum in enumerate(replies):
+                if i < len(replies) - 1:
+                    print("\nENTER=next reply | SPACE=skip remaining | P=reply")
+                else:
+                    print("\nEnd of replies | P=reply")
+
+                k = get_key().lower()
+
+                if k == " ":
+                    set_status("Skipped remaining replies")
                     break
-                elif choice=="1":
-                    val = prompt("Enter number of lines per page: ")
-                    if val.isdigit() and int(val)>0:
-                        PAGE_LINES=int(val)
-                elif choice=="2":
-                    val=prompt("Enter max articles to list: ")
-                    if val.isdigit() and int(val)>0:
-                        MAX_ARTICLES_LIST=int(val)
-                elif choice=="3":
-                    val=prompt("Enter max replies to scan: ")
-                    if val.isdigit() and int(val)>0:
-                        MAX_REPLY_SCAN=int(val)
-                elif choice=="4":
-                    val=prompt("Enter default NNTP group: ")
-                    if val:
-                        START_GROUP=val
-                elif choice=="5":
-                    SHOW_REPLY_COUNT=not SHOW_REPLY_COUNT
-                elif choice=="6":
-                    SHOW_REPLY_COUNT_MAIN=not SHOW_REPLY_COUNT_MAIN
+                elif k == "p":
+                    post_reply(nntp, group, rnum)
+                elif k in ("\r", "\n"):
+                    show_article(nntp, rnum, group, True)
 
 # ---------- MAIN ----------
 def main():
     print(f"Connecting to {NNTP_SERVER}:{NNTP_PORT}...")
     nntp = nntplib.NNTP_SSL(NNTP_SERVER, NNTP_PORT, USERNAME, PASSWORD)
-    print("Connected successfully!")
+    set_status("Connected")
     browse_group(nntp, START_GROUP)
     nntp.quit()
 
-if __name__=="__main__":
+if __name__ == "__main__":
     main()
