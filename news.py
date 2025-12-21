@@ -289,7 +289,7 @@ def browse_group(nntp, group):
         print(f"Subject: {p['subject']}")
 
         show_status()
-        print("\nENTER=read  SPACE=next  BACKSPACE=previous  R=replies  N=new post  L=reload  J=jump  G=group  B=batch list  P=set page lines  S=save post  Q=quit")
+        print("\nENTER=read  SPACE=next  BACKSPACE=previous  R=replies  N=new post  L=reload  J=jump  G=group  B=batch list  P=set page lines  S=save post  F=find author  Q=quit")
 
         key = get_key()
         if key == "q":
@@ -356,7 +356,7 @@ def browse_group(nntp, group):
                     print(f"From: {p['from']}")
                     print(f"Date: {p['date']}")
                     print(f"Replies: {p['replies'] if SHOW_REPLY_COUNT_MAIN else '?'}")
-                    print(f"Subject: {p['subject']}\n")  # blank line between posts
+                    print(f"Subject: {p['subject']}\n")
                 print("--- End of list ---")
                 set_status(f"Displayed {end-index} posts")
         elif key.lower() == "p":
@@ -393,6 +393,40 @@ def browse_group(nntp, group):
                     set_status("Invalid post number")
             else:
                 set_status("Invalid input")
+        elif key.lower() == "f":
+            keyword = prompt("Enter author keyword: ").strip()
+            if not keyword:
+                set_status("No keyword entered")
+                continue
+
+            val = prompt("How many posts to display? ")
+            if not val.isdigit() or int(val) <= 0:
+                set_status("Invalid number, search aborted")
+                continue
+            count = int(val)
+
+            # Fuzzy match function (simple case-insensitive substring)
+            def fuzzy_match(author_text, keyword):
+                return keyword.lower() in author_text.lower()
+
+            # Find matches
+            matches = [p for p in posts if fuzzy_match(p['from'], keyword)]
+            if not matches:
+                set_status("No matching posts found")
+                continue
+
+            # Limit to requested number
+            matches = matches[:count]
+
+            print(f"\nListing {len(matches)} matching posts:\n")
+            for i, p in enumerate(matches, 1):
+                print(f"[{i}] #{p['num']}")
+                print(f"From: {p['from']}")
+                print(f"Date: {p['date']}")
+                print(f"Replies: {p['replies'] if SHOW_REPLY_COUNT_MAIN else '?'}")
+                print(f"Subject: {p['subject']}\n")
+            print("--- End of list ---")
+            set_status(f"Displayed {len(matches)} matching posts")
 
 # ---------- MAIN ----------
 def main():
