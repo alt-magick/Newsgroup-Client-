@@ -126,7 +126,7 @@ def get_post_body():
         while True:
             line = input()
             if line.strip() == ".":
-                break  # stop input when user enters a single period on a line
+                break
             lines.append(line)
         body = "\n".join(lines)
         if not body.strip():
@@ -134,7 +134,6 @@ def get_post_body():
             return None
         return body
 
-    # default: editor
     body = edit_body()
     if not body.strip():
         set_status("Post aborted (empty body)")
@@ -290,61 +289,110 @@ def browse_group(nntp, group):
         print(f"Subject: {p['subject']}")
 
         show_status()
-        print("\nENTER=read  SPACE=next  R=replies  N=new post  L=reload  J=jump  G=group  Q=quit")
+        print("\nENTER=read  SPACE=next  BACKSPACE=previous  R=replies  N=new post  L=reload  J=jump  G=group  B=batch list  P=set page lines  S=save post  Q=quit")
 
-        key = get_key().lower()
-
+        key = get_key()
         if key == "q":
             sys.exit(0)
-
         elif key == " ":
             index += 1
-
         elif key in ("\r", "\n"):
             show_article(nntp, p["num"], group, True)
-
+        elif key == "\x7f":  # BACKSPACE
+            if index > 0:
+                index -= 1
         elif key == "n":
             if post_article(nntp, group):
                 posts, first, last = reload_group(nntp, group)
                 index = 0
-
         elif key == "l":
             posts, first, last = reload_group(nntp, group)
             index = 0
             set_status("Group reloaded")
-
         elif key == "j":
             val = prompt("Jump to post number: ")
             if val.isdigit():
                 idx = int(val) - 1
                 if 0 <= idx < len(posts):
                     index = idx
-
         elif key == "g":
             browse_group(nntp, prompt("New group: "))
             return
-
         elif key == "r":
             replies = scan_replies_xover(nntp, p["msgid"], first, last)
             if not replies:
                 set_status("No replies found")
                 continue
 
-            for i, rnum in enumerate(replies):
-                if i < len(replies) - 1:
-                    print("\nENTER=next reply | SPACE=skip remaining | P=reply")
+            idx = 0
+            while 0 <= idx < len(replies):
+                rnum = replies[idx]
+                if idx < len(replies) - 1:
+                    print("\nENTER=next reply | BACKSPACE=previous | SPACE=skip remaining | P=reply")
                 else:
-                    print("\nEnd of replies | P=reply")
+                    print("\nEnd of replies | BACKSPACE=previous | P=reply")
 
-                k = get_key().lower()
-
+                k = get_key()
                 if k == " ":
                     set_status("Skipped remaining replies")
                     break
-                elif k == "p":
-                    post_reply(nntp, group, rnum)
                 elif k in ("\r", "\n"):
                     show_article(nntp, rnum, group, True)
+                    idx += 1
+                elif k == "\x7f":  # BACKSPACE
+                    if idx > 0:
+                        idx -= 1
+                elif k.lower() == "p":
+                    post_reply(nntp, group, rnum)
+        elif key.lower() == "b":
+            val = prompt("How many posts to list from current position? ")
+            if val.isdigit():
+                count = int(val)
+                end = min(index + count, len(posts))
+                print(f"\nListing posts {index+1} to {end}:\n")
+                for i in range(index, end):
+                    p = posts[i]
+                    print(f"[{i+1}] #{p['num']}")
+                    print(f"From: {p['from']}")
+                    print(f"Date: {p['date']}")
+                    print(f"Replies: {p['replies'] if SHOW_REPLY_COUNT_MAIN else '?'}")
+                    print(f"Subject: {p['subject']}\n")  # blank line between posts
+                print("--- End of list ---")
+                set_status(f"Displayed {end-index} posts")
+        elif key.lower() == "p":
+            val = prompt("Enter number of lines per page: ")
+            if val.isdigit() and int(val) > 0:
+                global PAGE_LINES
+                PAGE_LINES = int(val)
+                set_status(f"Page size set to {PAGE_LINES} lines")
+            else:
+                set_status("Invalid input, page size unchanged")
+        elif key.lower() == "s":
+            val = prompt("Enter post number to save: ")
+            if val.isdigit():
+                idx = int(val) - 1
+                if 0 <= idx < len(posts):
+                    p = posts[idx]
+                    filename = prompt("Enter file name to save as: ")
+                    if filename.strip():
+                        try:
+                            _, hinfo = nntp.head(str(p["num"]))
+                            _, body = nntp.body(str(p["num"]))
+                            headers_text = "\n".join([decode_body_line(l) for l in hinfo.lines])
+                            body_text = "\n".join([decode_body_line(l) for l in body.lines])
+                            with open(filename, "w", encoding="utf-8") as f:
+                                f.write(headers_text)
+                                f.write("\n\n")
+                                f.write(body_text)
+                            set_status(f"Post saved to {filename}")
+                        except Exception as e:
+                            set_status(f"Failed to save post: {e}")
+                    else:
+                        set_status("Invalid file name, save aborted")
+                else:
+                    set_status("Invalid post number")
+            else:
+                set_status("Invalid input")
 
 # ---------- MAIN ----------
 def main():
