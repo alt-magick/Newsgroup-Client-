@@ -6,6 +6,7 @@ import tty
 import re
 import quopri
 import base64
+from email.message import EmailMessage
 import os
 import uuid
 
@@ -124,6 +125,66 @@ def reload_group(nntp, group):
         set_status(f"Reload failed: {e}")
         return []
 
+# ---------- HEADER SEARCH ----------
+def header_search(nntp, group, field, keyword, count):
+    _, _, first, last, _ = nntp.group(group)
+    start = max(int(first), int(last) - count + 1)
+    _, overviews = nntp.over((start, last))
+    results = []
+    rel = 1
+    total = len(overviews)
+    for idx, (num, hdr) in enumerate(reversed(overviews), 1):
+        sys.stdout.write(f"\rSearching headers... ({idx}/{total})")
+        sys.stdout.flush()
+        value = CLEAN_RE.sub("", hdr.get(field, ""))
+        if keyword.lower() in value.lower():
+            msgid = hdr.get("message-id", "")
+            replies = sum(1 for _, h in overviews if msgid in h.get("references", "")) if SHOW_REPLY_COUNT_MAIN else 0
+            results.append({
+                "rel_num": rel,
+                "num": int(num),
+                "from": CLEAN_RE.sub("", hdr.get("from", "?")),
+                "date": hdr.get("date", "?"),
+                "subject": CLEAN_RE.sub("", hdr.get("subject", "")),
+                "replies": replies,
+                "msgid": msgid
+            })
+        rel += 1
+    sys.stdout.write("\rSearch complete!           \n")
+    return results
+
+# ---------- BODY SEARCH ----------
+def body_search(nntp, group, keyword, count):
+    _, _, first, last, _ = nntp.group(group)
+    start = max(int(first), int(last) - count + 1)
+    _, overviews = nntp.over((start, last))
+    matches = []
+    rel = 1
+    total = len(overviews)
+    for idx, (num, hdr) in enumerate(reversed(overviews), 1):
+        sys.stdout.write(f"\rSearching bodies... ({idx}/{total})")
+        sys.stdout.flush()
+        try:
+            _, body = nntp.body(str(num))
+            text = "\n".join(decode_body_line(l) for l in body.lines)
+            if keyword.lower() in text.lower():
+                msgid = hdr.get("message-id", "")
+                replies = sum(1 for _, h in overviews if msgid in h.get("references", "")) if SHOW_REPLY_COUNT_MAIN else 0
+                matches.append({
+                    "rel_num": rel,
+                    "num": int(num),
+                    "from": CLEAN_RE.sub("", hdr.get("from", "?")),
+                    "date": hdr.get("date", "?"),
+                    "subject": CLEAN_RE.sub("", hdr.get("subject", "")),
+                    "replies": replies,
+                    "msgid": msgid
+                })
+        except Exception:
+            pass
+        rel += 1
+    sys.stdout.write("\rSearch complete!           \n")
+    return matches
+
 # ---------- FETCH REPLIES ----------
 def fetch_replies(nntp, group, msgid):
     try:
@@ -132,7 +193,7 @@ def fetch_replies(nntp, group, msgid):
         start = max(first, last - MAX_ARTICLES_LIST + 1)
         _, overviews = nntp.over((start, last))
     except Exception as e:
-        print(f"\nFailed to fetch overviews: {e}\n")
+        print(f"\nFailed to fetch overviews: {e}")
         return []
 
     replies = []
@@ -153,61 +214,51 @@ def fetch_replies(nntp, group, msgid):
             rel += 1
     return replies
 
-# ---------- POST NEW OR REPLY (RFC 1036 SAFE) ----------
+# ---------- POST NEW OR REPLY ----------
 def post_article(nntp, group, reply_to_msgid=None, reply_subject=None):
-    print()
     name = prompt("Your name: ")
     email = prompt("Your email: ")
-    from_addr = f"{sanitize_header(name)} <{sanitize_header(email)}>"
+    FROM_ADDR = f"{sanitize_header(name)} <{sanitize_header(email)}>"
 
     if reply_subject:
-        subject = reply_subject
-        if not subject.lower().startswith("re:"):
-            subject = "Re: " + subject
+        subject = f"Re: {reply_subject}" if not reply_subject.lower().startswith("re:") else reply_subject
     else:
         subject = prompt("Subject: ")
-
     subject = sanitize_header(subject)
 
-    print("\nEnter message body. End with a single '.' on a line:\n")
-
+    print("Enter message body. End with a single '.' on a line:")
     lines = []
     while True:
         line = input()
         if line.strip() == ".":
             break
         lines.append(line)
-
     body = "\r\n".join(lines)
-    msgid = f"<{uuid.uuid4().hex}@{NNTP_SERVER}>"
 
-    headers = [
-        f"From: {from_addr}",
-        f"Newsgroups: {group}",
-        f"Subject: {subject}",
-        f"Message-ID: {msgid}",
-    ]
-
+    msg = EmailMessage()
+    msg["From"] = FROM_ADDR
+    msg["Newsgroups"] = group
+    msg["Subject"] = subject
     if reply_to_msgid:
-        headers.append(f"References: {reply_to_msgid}")
-
-    article = "\r\n".join(headers) + "\r\n\r\n" + body + "\r\n"
+        msg["References"] = reply_to_msgid
+    msg["Message-ID"] = f"<{uuid.uuid4().hex}@{NNTP_SERVER}>"
+    msg.set_content(body)
 
     try:
-        nntp.post(article.encode("utf-8", errors="replace"))
-        print("\nPost successful!\n")
+        nntp.post(msg.as_bytes())
+        print("Post successful!")
     except Exception as e:
-        print(f"\nPost failed: {e}\n")
+        print(f"Post failed: {e}")
 
-# ---------- SHOW REPLIES (THREADED) ----------
+# ---------- SHOW REPLIES ----------
 def show_replies_thread(nntp, group, msgid, level=0):
     replies = fetch_replies(nntp, group, msgid)
     if not replies:
-        print("\nNo replies found.\n")
+        print("\nNo replies found.")
         return
 
     while True:
-        print("\nReplies:\n")
+        print("\nReplies:")
         for idx, r in enumerate(replies, 1):
             indent = "  " * level
             print(f"{indent}[{idx}]")
@@ -216,25 +267,56 @@ def show_replies_thread(nntp, group, msgid, level=0):
             print(f"{indent}Subject: {r['subject']}")
             print(f"{indent}Replies: {r['replies']}\n")
 
-        sel = prompt("Enter reply number to read, R=reply, ENTER=back: ").lower()
+        sel = prompt("\nEnter reply number to read, R=reply, ENTER=back: ").strip()
         if not sel:
             return
-        if sel == "r":
-            rnum = prompt("Reply to which number: ")
+        if sel.lower() == "r":
+            rnum = prompt("Enter reply number to respond to: ").strip()
             if rnum.isdigit():
-                r = replies[int(rnum) - 1]
-                post_article(nntp, group, r["msgid"], r["subject"])
+                idx = int(rnum) - 1
+                if 0 <= idx < len(replies):
+                    r = replies[idx]
+                    post_article(nntp, group, r["msgid"], r["subject"])
             continue
-        if sel.isdigit():
-            r = replies[int(sel) - 1]
-            print(f"\n--- Reading Reply #{r['num']} ---\n")
+        if not sel.isdigit():
+            continue
+        sel_idx = int(sel) - 1
+        if 0 <= sel_idx < len(replies):
+            r = replies[sel_idx]
+            print(f"\n--- Reading Reply #{r['num']} ---")
             print(f"From: {r['from']}")
             print(f"Date: {r['date']}")
             print(f"Subject: {r['subject']}\n")
             show_article(nntp, r["num"])
-            if r["replies"]:
-                if prompt("Press R to view replies to this reply, ENTER to continue: ").lower() == "r":
+            if r["replies"] > 0:
+                k = prompt("Press R to view replies to this reply, ENTER to continue: ").lower()
+                if k == "r":
                     show_replies_thread(nntp, group, r["msgid"], level + 1)
+
+# ---------- JUMP FUNCTION ----------
+def jump_post(posts):
+    val = prompt("Jump to post #: ").strip()
+    if not val:
+        return None
+    if val.startswith("#"):
+        # Absolute NNTP message number
+        try:
+            n = int(val[1:])
+            for idx, p in enumerate(posts):
+                if p["num"] == n:
+                    return idx
+        except:
+            pass
+    else:
+        # Relative post number (1=newest)
+        try:
+            n = int(val)
+            if 1 <= n <= len(posts):
+                return n - 1
+        except:
+            pass
+    set_status("Invalid jump number")
+    return None
 
 # ---------- BROWSER ----------
 def browse_group(nntp, group):
@@ -242,6 +324,11 @@ def browse_group(nntp, group):
     index = 0
 
     while True:
+        if not posts:
+            set_status("No posts")
+            posts = reload_group(nntp, group)
+            continue
+
         p = posts[index]
         print(f"\n[{p['rel_num']}] #{p['num']}")
         print(f"From: {p['from']}")
@@ -250,10 +337,12 @@ def browse_group(nntp, group):
         print(f"Subject: {p['subject']}")
         show_status()
 
-        print("\nENTER=read SPACE=next BACKSPACE=prev "
-              "L=reload G=group "
-              "F=author S=subject M=body "
-              "R=replies N=new post Y=reply P=page Q=quit\n")
+        print(
+            "\nENTER=read  SPACE=next  BACKSPACE=prev  "
+            "L=reload  J=jump  G=group  "
+            "B=batch  F=author  S=subject  M=body  "
+            "R=replies  N=new post  Y=reply  P=page  Q=quit"
+        )
 
         k = get_key().lower()
         if k == "q":
@@ -273,6 +362,42 @@ def browse_group(nntp, group):
             group = prompt("New group: ")
             posts = reload_group(nntp, group)
             index = 0
+        elif k == "j":
+            idx = jump_post(posts)
+            if idx is not None:
+                index = idx
+        elif k in ("f", "s", "m"):
+            kw = prompt("Keyword: ")
+            c = prompt("Articles to scan: ")
+            if not c.isdigit():
+                continue
+            if k == "f":
+                results = header_search(nntp, group, "from", kw, int(c))
+            elif k == "s":
+                results = header_search(nntp, group, "subject", kw, int(c))
+            else:
+                results = body_search(nntp, group, kw, int(c))
+            print(f"\nFound {len(results)} posts:\n")
+            for r in results:
+                print(f"[{r['rel_num']}] #{r['num']}")
+                print(f"From: {r['from']}")
+                print(f"Date: {r['date']}")
+                print(f"Replies: {r['replies']}")
+                print(f"Subject: {r['subject']}\n")
+        elif k == "b":
+            c = prompt("How many posts? ")
+            if c.isdigit():
+                for p2 in posts[index:index+int(c)]:
+                    print(f"[{p2['rel_num']}] #{p2['num']}")
+                    print(f"From: {p2['from']}")
+                    print(f"Date: {p2['date']}")
+                    print(f"Replies: {p2['replies']}")
+                    print(f"Subject: {p2['subject']}\n")
+        elif k == "p":
+            v = prompt("Lines per page: ")
+            if v.isdigit():
+                global PAGE_LINES
+                PAGE_LINES = int(v)
         elif k == "r":
             show_replies_thread(nntp, group, p["msgid"])
         elif k == "n":
