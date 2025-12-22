@@ -19,20 +19,20 @@ G = group - Changes newsgroup
 
 B = Batch - List articles 
 
-F = author - Finds posts by author
+F = Author - Finds posts by author
 
-S = subject - Finds posts by subject
+S = Subject - Finds posts by subject
 
-M = body - Searches through message bodies
+M = Body - Searches through message bodies
 
-R = replies - Reads replies to articles 
+R = Replies - Reads replies to articles 
 
-N = new post - Posts to newsgroup 
+N = New post - Posts to newsgroup 
 
-Y = reply - Replies to current article 
+Y = Reply - Replies to current article 
 
-P = page - Sets the length of each page
+P = Page - Sets the length of each page
 
-Q = quit - Closes the newsgroup client 
+Q = Quit - Closes the newsgroup client 
 
 Hint: Pinch the terminal window to change the font size on Termux.
