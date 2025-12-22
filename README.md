@@ -1,4 +1,4 @@
-# Newsgroup-Client-
+# Newsgroup-Client
 For Termux 
 
 This is a Python script that runs on Android in Termux. It is a full newsgroup client for Usenet.
