@@ -5,30 +5,30 @@ This is a python script that runs on Android in Termux. It is a full newsgroup c
 
 Menu Functions 
 
-ENTER=read - Opens current article 
+ENTER = read - Opens current article 
 
-SPACE=next - Moves to next article 
+SPACE = next - Moves to next article 
 
-BACKSPACE=prev - Moves to previous article 
+BACKSPACE = prev - Moves to previous article 
 
-L=reload - Loads new posts
+L = reload - Loads new posts
 
-G=group - Changes newsgroup 
+G = group - Changes newsgroup 
 
-F=author - Finds posts by author
+F = author - Finds posts by author
 
-S=subject - Finds posts by subject
+S = subject - Finds posts by subject
 
-M=body - Searches through message bodies
+M = body - Searches through message bodies
 
-R=replies - Reads replies to articles 
+R = replies - Reads replies to articles 
 
-N=new post - Posts to newsgroup 
+N = new post - Posts to newsgroup 
 
-Y=reply - Replies to current article 
+Y = reply - Replies to current article 
 
-P=page - Sets the length of each page
+P = page - Sets the length of each page
 
-Q=quit - Closes the newsgroup client 
+Q = quit - Closes the newsgroup client 
 
 Hint: Pinch the terminal window to change the font size on Termux.
