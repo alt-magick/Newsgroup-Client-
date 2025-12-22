@@ -5,11 +5,11 @@ This is a python script that runs on Android in Termux. It is a full newsgroup c
 
 Menu Functions 
 
-ENTER = read - Opens current article 
+ENTER = Read - Opens current article 
 
-SPACE = next - Moves to next article 
+SPACE = Next - Moves to next article 
 
-BACKSPACE = prev - Moves to previous article 
+BACKSPACE = Previous - Moves to previous article 
 
 L = reload - Loads new posts
 
