@@ -11,11 +11,11 @@ SPACE = Next - Moves to next article
 
 BACKSPACE = Previous - Moves to previous article 
 
-L = reload - Loads new posts
+L = Reload - Loads new posts
 
 J = Jump - Skip to an article
 
-G = group - Changes newsgroup 
+G = Group - Changes newsgroup 
 
 B = Batch - List articles 
 
