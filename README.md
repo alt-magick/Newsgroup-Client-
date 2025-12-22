@@ -13,7 +13,11 @@ BACKSPACE = prev - Moves to previous article
 
 L = reload - Loads new posts
 
+J = Jump - Skip to an article
+
 G = group - Changes newsgroup 
+
+B = Batch - List articles 
 
 F = author - Finds posts by author
 
