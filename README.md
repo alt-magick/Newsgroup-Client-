@@ -30,3 +30,5 @@ Y=reply - Replies to current article
 P=page - Sets the length of each page
 
 Q=quit - Closes the newsgroup client 
+
+Hint: Pinch the terminal window to change the font size on Termux.
