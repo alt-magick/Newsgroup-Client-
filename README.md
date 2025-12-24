@@ -33,6 +33,8 @@ Y = Reply - Replies to current article
 
 P = Page - Sets the length of each page
 
+C = Reconnect - Reconnects to server
+
 Q = Quit - Closes the newsgroup client 
 
 Hint: Pinch the terminal window to change the font size on Termux.
