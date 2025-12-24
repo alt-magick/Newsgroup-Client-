@@ -286,7 +286,7 @@ def show_replies_thread(nntp, group, msgid, level=0):
         if 0 <= sel_idx < len(replies):
             r = replies[sel_idx]
             print(f"\n--- Reading Reply #{r['num']} ---")
-            print(f"Group: {group}")  # <-- group under article number
+            print(f"Group: {group}")
             print(f"From: {r['from']}")
             print(f"Date: {r['date']}")
             print(f"Subject: {r['subject']}\n")
@@ -332,7 +332,7 @@ def browse_group(nntp, group):
 
         p = posts[index]
         print(f"\n[{p['rel_num']}] #{p['num']}")
-        print(f"Group: {group}")  # <-- group under article number
+        print(f"Group: {group}")
         print(f"From: {p['from']}")
         print(f"Date: {p['date']}")
         print(f"Replies: {p['replies']}")
@@ -353,6 +353,7 @@ def browse_group(nntp, group):
             sys.exit(0)
         elif k == "c":
             set_status("Reconnecting...")
+            current_index = index
             try:
                 nntp.quit()
             except:
@@ -360,7 +361,10 @@ def browse_group(nntp, group):
             try:
                 nntp = nntplib.NNTP_SSL(NNTP_SERVER, NNTP_PORT, USERNAME, PASSWORD)
                 posts = reload_group(nntp, group)
-                index = 0
+                if 0 <= current_index < len(posts):
+                    index = current_index
+                else:
+                    index = 0
                 set_status("Reconnected successfully")
             except Exception as e:
                 set_status(f"Reconnect failed: {e}")
@@ -398,7 +402,7 @@ def browse_group(nntp, group):
             print(f"\nFound {len(results)} posts:\n")
             for r in results:
                 print(f"[{r['rel_num']}] #{r['num']}")
-                print(f"Group: {group}")  # <-- group under article number
+                print(f"Group: {group}")
                 print(f"From: {r['from']}")
                 print(f"Date: {r['date']}")
                 print(f"Replies: {r['replies']}")
@@ -406,9 +410,10 @@ def browse_group(nntp, group):
         elif k == "b":
             c = prompt("How many posts? ")
             if c.isdigit():
+                print()  # <-- new line before listing batch
                 for p2 in posts[index:index+int(c)]:
                     print(f"[{p2['rel_num']}] #{p2['num']}")
-                    print(f"Group: {group}")  # <-- group under article number
+                    print(f"Group: {group}")
                     print(f"From: {p2['from']}")
                     print(f"Date: {p2['date']}")
                     print(f"Replies: {p2['replies']}")
