@@ -128,62 +128,38 @@ def reload_group(nntp, group):
         return []
 
 # ---------- HEADER SEARCH ----------
-def header_search(nntp, group, field, keyword, count):
-    _, _, first, last, _ = nntp.group(group)
-    start = max(int(first), int(last) - count + 1)
-    _, overviews = nntp.over((start, last))
+def header_search(nntp, group, field, keyword, count, start_index=0, posts=None):
+    if posts is None:
+        posts = reload_group(nntp, group)
     results = []
     rel = 1
-    total = len(overviews)
-    for idx, (num, hdr) in enumerate(reversed(overviews), 1):
+    total = min(count, len(posts) - start_index)
+    for idx, p in enumerate(posts[start_index:start_index + count], 1):
         sys.stdout.write(f"\rSearching headers... ({idx}/{total})")
         sys.stdout.flush()
-        value = CLEAN_RE.sub("", hdr.get(field, ""))
+        value = CLEAN_RE.sub(p.get(field, ""), "")
         if keyword.lower() in value.lower():
-            msgid = hdr.get("message-id", "")
-            replies = sum(1 for _, h in overviews if msgid in h.get("references", "")) if SHOW_REPLY_COUNT_MAIN else 0
-            results.append({
-                "rel_num": rel,
-                "num": int(num),
-                "from": CLEAN_RE.sub("", hdr.get("from", "?")),
-                "date": hdr.get("date", "?"),
-                "subject": CLEAN_RE.sub("", hdr.get("subject", "")),
-                "replies": replies,
-                "msgid": msgid
-            })
+            results.append(p)
         rel += 1
     sys.stdout.write("\rSearch complete!           \n")
     return results
 
 # ---------- BODY SEARCH ----------
-def body_search(nntp, group, keyword, count):
-    _, _, first, last, _ = nntp.group(group)
-    start = max(int(first), int(last) - count + 1)
-    _, overviews = nntp.over((start, last))
+def body_search(nntp, group, keyword, count, start_index=0, posts=None):
+    if posts is None:
+        posts = reload_group(nntp, group)
     matches = []
-    rel = 1
-    total = len(overviews)
-    for idx, (num, hdr) in enumerate(reversed(overviews), 1):
+    total = min(count, len(posts) - start_index)
+    for idx, p in enumerate(posts[start_index:start_index + count], 1):
         sys.stdout.write(f"\rSearching bodies... ({idx}/{total})")
         sys.stdout.flush()
         try:
-            _, body = nntp.body(str(num))
+            _, body = nntp.body(str(p["num"]))
             text = "\n".join(decode_body_line(l) for l in body.lines)
             if keyword.lower() in text.lower():
-                msgid = hdr.get("message-id", "")
-                replies = sum(1 for _, h in overviews if msgid in h.get("references", "")) if SHOW_REPLY_COUNT_MAIN else 0
-                matches.append({
-                    "rel_num": rel,
-                    "num": int(num),
-                    "from": CLEAN_RE.sub("", hdr.get("from", "?")),
-                    "date": hdr.get("date", "?"),
-                    "subject": CLEAN_RE.sub("", hdr.get("subject", "")),
-                    "replies": replies,
-                    "msgid": msgid
-                })
+                matches.append(p)
         except Exception:
             pass
-        rel += 1
     sys.stdout.write("\rSearch complete!           \n")
     return matches
 
@@ -353,7 +329,6 @@ def browse_group(nntp, group):
             sys.exit(0)
         elif k == "c":
             set_status("Reconnecting...")
-            current_index = index
             try:
                 nntp.quit()
             except:
@@ -361,10 +336,7 @@ def browse_group(nntp, group):
             try:
                 nntp = nntplib.NNTP_SSL(NNTP_SERVER, NNTP_PORT, USERNAME, PASSWORD)
                 posts = reload_group(nntp, group)
-                if 0 <= current_index < len(posts):
-                    index = current_index
-                else:
-                    index = 0
+                index = 0
                 set_status("Reconnected successfully")
             except Exception as e:
                 set_status(f"Reconnect failed: {e}")
@@ -390,15 +362,16 @@ def browse_group(nntp, group):
                 index = idx
         elif k in ("f", "s", "m"):
             kw = prompt("Keyword: ")
-            c = prompt("Articles to scan: ")
-            if not c.isdigit():
+            num_to_search = prompt("Articles to scan: ")
+            if not num_to_search.isdigit():
                 continue
+            num_to_search = int(num_to_search)
             if k == "f":
-                results = header_search(nntp, group, "from", kw, int(c))
+                results = header_search(nntp, group, "from", kw, num_to_search, start_index=index, posts=posts)
             elif k == "s":
-                results = header_search(nntp, group, "subject", kw, int(c))
+                results = header_search(nntp, group, "subject", kw, num_to_search, start_index=index, posts=posts)
             else:
-                results = body_search(nntp, group, kw, int(c))
+                results = body_search(nntp, group, kw, num_to_search, start_index=index, posts=posts)
             print(f"\nFound {len(results)} posts:\n")
             for r in results:
                 print(f"[{r['rel_num']}] #{r['num']}")
@@ -410,7 +383,7 @@ def browse_group(nntp, group):
         elif k == "b":
             c = prompt("How many posts? ")
             if c.isdigit():
-                print()  # <-- new line before listing batch
+                print()  # Blank line before first article
                 for p2 in posts[index:index+int(c)]:
                     print(f"[{p2['rel_num']}] #{p2['num']}")
                     print(f"Group: {group}")
