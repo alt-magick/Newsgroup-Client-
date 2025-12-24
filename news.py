@@ -15,9 +15,9 @@ NNTP_SERVER = "usnews.blocknews.net"
 NNTP_PORT   = 563
 USERNAME    = ""
 PASSWORD    = ""
-PAGE_LINES             = 12
+PAGE_LINES             = 25
 MAX_ARTICLES_LIST      = 200
-START_GROUP            = "alt.test"
+START_GROUP            = "alt.magick"
 SHOW_REPLY_COUNT_MAIN  = True
 # ==============================================
 
@@ -87,10 +87,12 @@ def sanitize_header(s):
     return "".join(c if 32 <= ord(c) <= 126 else " " for c in s).strip()
 
 # ---------- DISPLAY ----------
-def show_article(nntp, num):
+def show_article(nntp, num, group=None):
     try:
         _, body = nntp.body(str(num))
         print()
+        if group:
+            print(f"Group: {group}\n")
         paged_print([decode_body_line(l) for l in body.lines])
         print()
     except Exception as e:
@@ -284,10 +286,11 @@ def show_replies_thread(nntp, group, msgid, level=0):
         if 0 <= sel_idx < len(replies):
             r = replies[sel_idx]
             print(f"\n--- Reading Reply #{r['num']} ---")
+            print(f"Group: {group}")  # <-- group under article number
             print(f"From: {r['from']}")
             print(f"Date: {r['date']}")
             print(f"Subject: {r['subject']}\n")
-            show_article(nntp, r["num"])
+            show_article(nntp, r["num"], group)
             if r["replies"] > 0:
                 k = prompt("Press R to view replies to this reply, ENTER to continue: ").lower()
                 if k == "r":
@@ -299,7 +302,6 @@ def jump_post(posts):
     if not val:
         return None
     if val.startswith("#"):
-        # Absolute NNTP message number
         try:
             n = int(val[1:])
             for idx, p in enumerate(posts):
@@ -308,7 +310,6 @@ def jump_post(posts):
         except:
             pass
     else:
-        # Relative post number (1=newest)
         try:
             n = int(val)
             if 1 <= n <= len(posts):
@@ -331,6 +332,7 @@ def browse_group(nntp, group):
 
         p = posts[index]
         print(f"\n[{p['rel_num']}] #{p['num']}")
+        print(f"Group: {group}")  # <-- group under article number
         print(f"From: {p['from']}")
         print(f"Date: {p['date']}")
         print(f"Replies: {p['replies']}")
@@ -341,18 +343,34 @@ def browse_group(nntp, group):
             "\nENTER=read  SPACE=next  BACKSPACE=prev  "
             "L=reload  J=jump  G=group  "
             "B=batch  F=author  S=subject  M=body  "
-            "R=replies  N=new post  Y=reply  P=page  Q=quit"
+            "R=replies  N=new post  Y=reply  P=page  C=reconnect  Q=quit"
         )
 
         k = get_key().lower()
         if k == "q":
+            try: nntp.quit()
+            except: pass
             sys.exit(0)
+        elif k == "c":
+            set_status("Reconnecting...")
+            try:
+                nntp.quit()
+            except:
+                pass
+            try:
+                nntp = nntplib.NNTP_SSL(NNTP_SERVER, NNTP_PORT, USERNAME, PASSWORD)
+                posts = reload_group(nntp, group)
+                index = 0
+                set_status("Reconnected successfully")
+            except Exception as e:
+                set_status(f"Reconnect failed: {e}")
+            continue
         elif k == " ":
             index = min(index + 1, len(posts) - 1)
         elif k == "\x7f":
             index = max(index - 1, 0)
         elif k in ("\r", "\n"):
-            show_article(nntp, p["num"])
+            show_article(nntp, p["num"], group)
             if prompt("Press R to reply, ENTER to continue: ").lower() == "r":
                 post_article(nntp, group, p["msgid"], p["subject"])
         elif k == "l":
@@ -380,6 +398,7 @@ def browse_group(nntp, group):
             print(f"\nFound {len(results)} posts:\n")
             for r in results:
                 print(f"[{r['rel_num']}] #{r['num']}")
+                print(f"Group: {group}")  # <-- group under article number
                 print(f"From: {r['from']}")
                 print(f"Date: {r['date']}")
                 print(f"Replies: {r['replies']}")
@@ -389,6 +408,7 @@ def browse_group(nntp, group):
             if c.isdigit():
                 for p2 in posts[index:index+int(c)]:
                     print(f"[{p2['rel_num']}] #{p2['num']}")
+                    print(f"Group: {group}")  # <-- group under article number
                     print(f"From: {p2['from']}")
                     print(f"Date: {p2['date']}")
                     print(f"Replies: {p2['replies']}")
@@ -408,9 +428,16 @@ def browse_group(nntp, group):
 # ---------- MAIN ----------
 def main():
     print(f"\nConnecting to {NNTP_SERVER}:{NNTP_PORT}\n")
-    nntp = nntplib.NNTP_SSL(NNTP_SERVER, NNTP_PORT, USERNAME, PASSWORD)
+    try:
+        nntp = nntplib.NNTP_SSL(NNTP_SERVER, NNTP_PORT, USERNAME, PASSWORD)
+    except Exception as e:
+        print(f"Initial connection failed: {e}")
+        sys.exit(1)
     browse_group(nntp, START_GROUP)
-    nntp.quit()
+    try:
+        nntp.quit()
+    except:
+        pass
 
 if __name__ == "__main__":
     main()
